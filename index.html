@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>我的日記 - 時光機版</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+:root {
+  --primary-color: #e8784a;
+  --bg-color: #fdf6f0;
+}
+*{ margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Noto Sans TC',system-ui; }
+body{ background: var(--bg-color); height:100vh; overflow:hidden; }
+#app{ max-width:480px; margin:0 auto; height:100vh; display:flex; flex-direction:column; }
+
+/* --- 登入頁面 --- */
+.login-wrap{ flex:1; display:flex; align-items:center; justify-content:center; padding:24px; background: var(--bg-color); }
+.login-card{ width:100%; background:white; border-radius:28px; padding:28px; box-shadow:0 10px 40px rgba(0,0,0,.08); }
+input.log-in{ width:100%; padding:14px; border-radius:18px; border:1px solid #eee; margin-bottom:12px; font-size:16px; }
+.btn-main{ width:100%; border:none; background: var(--primary-color); color:white; padding:15px; border-radius:18px; font-size:16px; font-weight:700; cursor:pointer; }
+
+/* --- 主畫面 --- */
+#mainApp{ display:none; flex-direction:column; flex:1; }
+.home-header{ background:linear-gradient(135deg, var(--primary-color), #c44a1e); color:white; padding:28px 20px 22px; text-align:center; }
+.ocr-import-btn{ margin-top:18px; width:100%; border:none; background:white; color:#c44a1e; border-radius:20px; padding:16px; font-size:17px; font-weight:800; cursor:pointer; }
+
+/* --- 行事曆標頭：新增跳轉功能 --- */
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 10px 10px;
+  background: white;
+  border-radius: 20px 20px 0 0;
+  margin: 10px 14px 0;
+}
+.nav-btn { font-size: 24px; color: var(--primary-color); cursor: pointer; padding: 0 15px; user-select: none; }
+.current-view { font-size: 20px; font-weight: 800; color: #333; display: flex; gap: 5px; cursor: pointer; }
+.current-view span:hover { background: #eee; border-radius: 5px; }
+
+/* --- 行事曆格子 --- */
+.calendar-wrap{ flex:1; overflow-y:auto; padding:0 14px 14px; }
+.cal-container { background: white; border-radius: 0 0 20px 20px; padding: 10px; }
+.cal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+.cal-day-name{ text-align:center; font-size:12px; color:#999; padding:8px 0; }
+.cal-day{ aspect-ratio:1; background:#f9f9f9; border-radius:14px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size: 16px; position:relative; }
+.cal-day.has-entry{ background:#fff0e8; color: var(--primary-color); font-weight:700; }
+.cal-day.has-entry::after{ content:''; position:absolute; bottom:6px; width:4px; height:4px; border-radius:50%; background: var(--primary-color); }
+.cal-day.today{ box-shadow: inset 0 0 0 2px var(--primary-color); }
+.cal-day.empty { background: transparent; cursor: default; }
+
+/* --- 編輯器 --- */
+#editorPage{ display:none; flex-direction:column; position:fixed; inset:0; background: var(--bg-color); z-index:100; }
+.editor-header{ background:white; padding:14px; display:flex; align-items:center; border-bottom:1px solid #eee; }
+.back-btn{ font-size:28px; margin-right:12px; cursor:pointer; color: var(--primary-color); }
+.editor-body{ flex:1; overflow-y:auto; padding:18px; background:white; margin:10px; border-radius:15px; }
+#diaryEditor{ min-height:100%; outline:none; font-size:17px; line-height:1.8; }
+
+/* --- 下拉選單 Modal --- */
+.jump-modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  display: none; align-items: center; justify-content: center; z-index: 2000;
+}
+.jump-box { width: 85%; background: white; border-radius: 24px; padding: 24px; }
+.jump-box select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 12px; border: 1px solid #ddd; font-size: 18px; }
+
+/* --- 其他功能遮罩 --- */
+.preview-layer, #ocrLoading, #dateModal { position:fixed; inset:0; display:none; flex-direction:column; z-index:5000; }
+#ocrLoading { background:rgba(0,0,0,0.8); color:white; align-items:center; justify-content:center; }
+.preview-layer { background:black; }
+</style>
+
+<input type="file" id="nativeOCRInput" accept="image/*" capture="environment" style="display:none" onchange="handleNativeOCR(this)"/>
+
+</head>
+<body>
+
+<div id="app">
+    <div id="loginPage" class="login-wrap">
+        <div class="login-card">
+            <div style="font-size:50px; text-align:center;">📔</div>
+            <h2 style="text-align:center; margin:10px 0 20px;">我的日記</h2>
+            <input type="email" id="loginEmail" class="log-in" placeholder="Email">
+            <input type="password" id="loginPassword" class="log-in" placeholder="密碼">
+            <button class="btn-main" onclick="doLogin()">進入時光機</button>
+        </div>
+    </div>
+
+    <div id="mainApp">
+        <div class="home-header">
+            <h1>我的日記</h1>
+            <button class="ocr-import-btn" onclick="startOCRImport()">📸 Google AI 匯入舊日記</button>
+        </div>
+
+        <div class="calendar-nav">
+            <div class="nav-btn" onclick="changeMonth(-1)">‹</div>
+            <div class="current-view" onclick="showJumpModal()">
+                <span id="viewYear">2026</span>年 <span id="viewMonth">5</span>月
+            </div>
+            <div class="nav-btn" onclick="changeMonth(1)">›</div>
+        </div>
+
+        <div class="calendar-wrap">
+            <div class="cal-container">
+                <div class="cal-grid">
+                    <div class="cal-day-name">日</div><div class="cal-day-name">一</div><div class="cal-day-name">二</div>
+                    <div class="cal-day-name">三</div><div class="cal-day-name">四</div><div class="cal-day-name">五</div><div class="cal-day-name">六</div>
+                </div>
+                <div class="cal-grid" id="calGrid"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="editorPage">
+        <div class="editor-header">
+            <div class="back-btn" onclick="backHome()">←</div>
+            <div id="editorDateLabel" style="font-weight:bold;"></div>
+            <button class="btn-main" style="width:auto; padding:8px 20px; margin-left:auto;" onclick="saveEntry()">儲存</button>
+        </div>
+        <div class="editor-body">
+            <div id="diaryEditor" contenteditable="true"></div>
+        </div>
+    </div>
+
+    <div id="jumpModal" class="jump-modal" onclick="this.style.display='none'">
+        <div class="jump-box" onclick="event.stopPropagation()">
+            <h3 style="text-align:center;">快速跳轉年月</h3>
+            <select id="jumpYear"></select>
+            <select id="jumpMonth"></select>
+            <button class="btn-main" onclick="executeJump()">確定跳轉</button>
+        </div>
+    </div>
+
+    <div id="previewLayer" class="preview-layer">
+        <div style="flex:1; display:flex; align-items:center; justify-content:center;"><img id="previewImage" style="max-width:100%;"></div>
+        <div style="display:flex; gap:10px; padding:20px;">
+            <button class="btn-main" style="background:#444;" onclick="retryPhoto()">重拍</button>
+            <button class="btn-main" onclick="confirmPhoto()">確認辨識</button>
+        </div>
+    </div>
+    <div id="ocrLoading">🔍 AI 正在閱讀日記內容...</div>
+</div>
+
+<script>
+// --- 設定 (請確保 Key 正確) ---
+const SUPABASE_URL = "https://rsuguwhgzyyvhlehpqqu.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJzdWd1d2hnenl5dmhsZWhwcXF1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5ODU4NDUsImV4cCI6MjA5MzU2MTg0NX0.SX9ixJYye0GNdKvcJ5c3FZAeN9s1B_oX7XnU8xwbkR8";
+const GOOGLE_VISION_API_KEY = '在此貼上你的API_KEY'; 
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+let currentUser = null;
+let entries = {};
+let currentYear = 2026;
+let currentMonth = 5; // 1-12
+let editingDate = '';
+
+// --- 啟動與登入 ---
+async function boot(){
+    const { data:{ user } } = await sb.auth.getUser();
+    if(!user) return;
+    currentUser = user;
+    document.getElementById('loginPage').style.display='none';
+    document.getElementById('mainApp').style.display='flex';
+    await loadEntries();
+    renderCalendar();
+}
+async function doLogin(){
+    let email = document.getElementById('loginEmail').value.trim();
+    let password = document.getElementById('loginPassword').value;
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if(error) alert(error.message); else boot();
+}
+boot();
+
+async function loadEntries(){
+    const { data } = await sb.from('diary_entries').select('date, content_html').eq('user_id', currentUser.id);
+    entries = {};
+    (data || []).forEach(e => { entries[e.date] = e; });
+}
+
+// --- 行事曆核心邏輯 ---
+function renderCalendar(){
+    document.getElementById('viewYear').innerText = currentYear;
+    document.getElementById('viewMonth').innerText = currentMonth;
+    
+    let firstDay = new Date(currentYear, currentMonth - 1, 1).getDay();
+    let totalDays = new Date(currentYear, currentMonth, 0).getDate();
+    let html = '';
+    
+    for(let i=0; i<firstDay; i++) html += `<div class="cal-day empty"></div>`;
+    
+    for(let d=1; d<=totalDays; d++){
+        let dateKey = `${currentYear}-${String(currentMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        let cls = 'cal-day';
+        if(entries[dateKey]) cls += ' has-entry';
+        if(dateKey === new Date().toISOString().split('T')[0]) cls += ' today';
+        html += `<div class="${cls}" onclick="openEditor('${dateKey}')">${d}</div>`;
+    }
+    document.getElementById('calGrid').innerHTML = html;
+}
+
+function changeMonth(delta){
+    currentMonth += delta;
+    if(currentMonth > 12) { currentMonth = 1; currentYear++; }
+    if(currentMonth < 1) { currentMonth = 12; currentYear--; }
+    renderCalendar();
+}
+
+// --- 快速跳轉功能 ---
+function showJumpModal(){
+    let ySel = document.getElementById('jumpYear');
+    let mSel = document.getElementById('jumpMonth');
+    ySel.innerHTML = ''; mSel.innerHTML = '';
+    for(let y=2026; y>=1950; y--) ySel.innerHTML += `<option value="${y}">${y}年</option>`;
+    for(let m=1; m<=12; m++) mSel.innerHTML += `<option value="${m}">${m}月</option>`;
+    ySel.value = currentYear;
+    mSel.value = currentMonth;
+    document.getElementById('jumpModal').style.display = 'flex';
+}
+
+function executeJump(){
+    currentYear = parseInt(document.getElementById('jumpYear').value);
+    currentMonth = parseInt(document.getElementById('jumpMonth').value);
+    document.getElementById('jumpModal').style.display = 'none';
+    renderCalendar();
+}
+
+// --- 編輯器功能 ---
+function openEditor(dateKey){
+    editingDate = dateKey;
+    document.getElementById('mainApp').style.display = 'none';
+    document.getElementById('editorPage').style.display = 'flex';
+    document.getElementById('editorDateLabel').innerText = dateKey;
+    document.getElementById('diaryEditor').innerHTML = entries[dateKey]?.content_html || '';
+}
+function backHome(){
+    document.getElementById('editorPage').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'flex';
+    renderCalendar();
+}
+async function saveEntry(){
+    let html = document.getElementById('diaryEditor').innerHTML;
+    if(entries[editingDate]){
+        await sb.from('diary_entries').update({ content_html: html }).eq('user_id', currentUser.id).eq('date', editingDate);
+    } else {
+        await sb.from('diary_entries').insert({ user_id: currentUser.id, date: editingDate, content_html: html });
+    }
+    await loadEntries();
+    alert('儲存成功！');
+    backHome();
+}
+
+// --- OCR 功能 ---
+function startOCRImport(){ document.getElementById('nativeOCRInput').click(); }
+function handleNativeOCR(input){
+    let file = input.files[0]; if(!file) return;
+    let reader = new FileReader();
+    reader.onload = e => {
+        document.getElementById('previewImage').src = e.target.result;
+        document.getElementById('previewLayer').style.display = 'flex';
+    };
+    reader.readAsDataURL(file);
+}
+function retryPhoto(){ document.getElementById('previewLayer').style.display = 'none'; startOCRImport(); }
+async function confirmPhoto(){
+    let imgBase64 = document.getElementById('previewImage').src.split(',')[1];
+    document.getElementById('previewLayer').style.display = 'none';
+    document.getElementById('ocrLoading').style.display = 'flex';
+    try {
+        const res = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`, {
+            method: 'POST',
+            body: JSON.stringify({ requests: [{ image: { content: imgBase64 }, features: [{ type: 'TEXT_DETECTION' }] }] })
+        });
+        const data = await res.json();
+        const text = data.responses[0].fullTextAnnotation.text;
+        // 辨識成功後直接跳轉到該日期 (假設 1987-01-01)
+        currentYear = 1987; currentMonth = 1;
+        await loadEntries();
+        renderCalendar();
+        openEditor('1987-01-01');
+        document.getElementById('diaryEditor').innerHTML += `<p>${text}</p>`;
+        alert('辨識完成，已歸類至 1987年1月1日');
+    } catch(e) { alert('辨識失敗：' + e.message); }
+    document.getElementById('ocrLoading').style.display = 'none';
+}
+</script>
+</body>
+</html>
